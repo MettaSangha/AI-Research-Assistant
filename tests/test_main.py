@@ -25,6 +25,9 @@ class FakeResponse:
     def read(self):
         return self.body
 
+    def close(self):
+        pass
+
 
 class TestInputValidation(unittest.TestCase):
 
@@ -96,6 +99,33 @@ class TestOllamaClient(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 main.query_ollama("Test question")
 
+    def test_handles_http_error(self):
+        error_response = FakeResponse(b"model not found")
+        http_error = urllib.error.HTTPError(
+            url="http://localhost:11434/api/chat",
+            code=404,
+            msg="Not Found",
+            hdrs={},
+            fp=error_response,
+        )
+        with patch(
+            "main.urllib.request.urlopen",
+            side_effect=http_error,
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                main.query_ollama("Test question")
+            self.assertIn("Ollama HTTP error (404)", str(ctx.exception))
+            self.assertIn("model not found", str(ctx.exception))
+
+    def test_handles_timeout_error(self):
+        with patch(
+            "main.urllib.request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                main.query_ollama("Test question")
+            self.assertIn("Ollama request timed out.", str(ctx.exception))
+
 
 class TestResearchOutput(unittest.TestCase):
 
@@ -104,6 +134,10 @@ class TestResearchOutput(unittest.TestCase):
         self.assertNotIn("<", result)
         self.assertNotIn(":", result)
         self.assertNotIn("/", result)
+
+    def test_sanitizes_filename_control_characters(self):
+        result = main.sanitize_filename("bad\x00\x1f\x0a\x0dname")
+        self.assertEqual(result, "badname")
 
     def test_generates_markdown_with_provenance(self):
         result = main.create_markdown(
@@ -134,6 +168,21 @@ class TestResearchOutput(unittest.TestCase):
                     "Test research analysis",
                     output.read_text(encoding="utf-8")
                 )
+
+    def test_saves_research_resolves_filename_collision(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(main, "RESEARCH_DIR", Path(temp_dir)):
+                output1 = main.save_research(
+                    "Collision question", "Analysis 1"
+                )
+                output2 = main.save_research(
+                    "Collision question", "Analysis 2"
+                )
+
+                self.assertTrue(output1.exists())
+                self.assertTrue(output2.exists())
+                self.assertNotEqual(output1, output2)
+                self.assertTrue(output2.name.endswith("-1.md"))
 
 
 class TestApplicationMain(unittest.TestCase):

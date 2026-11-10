@@ -30,6 +30,8 @@ PROJECT_DIR = Path(__file__).resolve().parent
 RESEARCH_DIR = PROJECT_DIR / "research"
 
 REQUEST_TIMEOUT = 180
+MAX_QUESTION_LENGTH = 5000
+PREVIEW_LENGTH = 1500
 
 
 # ---------------------------------------------------------
@@ -39,9 +41,8 @@ REQUEST_TIMEOUT = 180
 SYSTEM_PROMPT = """
 You are a rigorous research analyst.
 
-Your task is to examine research questions critically,
-distinguish evidence from speculation, and communicate
-uncertainty honestly.
+Examine research questions critically. Distinguish evidence
+from speculation and communicate uncertainty honestly.
 
 Return your analysis using these sections:
 
@@ -94,8 +95,10 @@ def get_research_question() -> str:
     if not question:
         raise ValueError("Research question cannot be empty.")
 
-    if len(question) > 5000:
-        raise ValueError("Research question exceeds 5,000 characters.")
+    if len(question) > MAX_QUESTION_LENGTH:
+        raise ValueError(
+            f"Research question exceeds {MAX_QUESTION_LENGTH:,} characters."
+        )
 
     return question
 
@@ -137,11 +140,24 @@ def query_ollama(question: str) -> str:
             request,
             timeout=REQUEST_TIMEOUT,
         ) as response:
-            result = json.loads(response.read().decode("utf-8"))
+            result = json.loads(
+                response.read().decode("utf-8")
+            )
+
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Ollama HTTP error ({exc.code}): {details}"
+        ) from exc
 
     except urllib.error.URLError as exc:
         raise RuntimeError(
-            f"Could not connect to Ollama: {exc}"
+            f"Could not connect to Ollama: {exc.reason}"
+        ) from exc
+
+    except TimeoutError as exc:
+        raise RuntimeError(
+            "Ollama request timed out."
         ) from exc
 
     except json.JSONDecodeError as exc:
@@ -150,17 +166,23 @@ def query_ollama(question: str) -> str:
         ) from exc
 
     if not isinstance(result, dict):
-        raise RuntimeError("Ollama returned an unexpected response format.")
+        raise RuntimeError(
+            "Ollama returned an unexpected response format."
+        )
 
     message = result.get("message")
 
     if not isinstance(message, dict):
-        raise RuntimeError("Ollama response is missing a valid message.")
+        raise RuntimeError(
+            "Ollama response is missing a valid message."
+        )
 
     content = message.get("content")
 
     if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("The model returned an empty response.")
+        raise RuntimeError(
+            "The model returned an empty response."
+        )
 
     return content.strip()
 
@@ -172,7 +194,7 @@ def query_ollama(question: str) -> str:
 def sanitize_filename(title: str) -> str:
     """Convert a title into a safe filename."""
 
-    filename = re.sub(r'[<>:"/\\|?*]', "", title)
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", title)
     filename = re.sub(r"\s+", "-", filename.strip())
     filename = filename.strip(".-")
 
@@ -188,8 +210,8 @@ def create_markdown(question: str, analysis: str) -> str:
 
     return f"""---
 title: Research Report
-created: {timestamp}
-model: {MODEL}
+created: "{timestamp}"
+model: "{MODEL}"
 status: AI-generated; claims not independently verified
 ---
 
@@ -227,11 +249,23 @@ def save_research(question: str, analysis: str) -> Path:
     filename = f"{timestamp}-{sanitize_filename(question[:60])}.md"
 
     output_path = RESEARCH_DIR / filename
-
     markdown = create_markdown(question, analysis)
 
-    with output_path.open("x", encoding="utf-8") as file:
-        file.write(markdown)
+    # Exclusive creation prevents accidental overwrites.
+    counter = 1
+
+    while True:
+        try:
+            with output_path.open("x", encoding="utf-8") as file:
+                file.write(markdown)
+            break
+
+        except FileExistsError:
+            output_path = (
+                RESEARCH_DIR
+                / f"{timestamp}-{sanitize_filename(question[:60])}-{counter}.md"
+            )
+            counter += 1
 
     return output_path
 
@@ -267,10 +301,12 @@ def main() -> int:
         print(f"\nLocation: {output_path}")
 
         print("\n--- ANALYSIS PREVIEW ---\n")
-        print(analysis[:1500])
+        print(analysis[:PREVIEW_LENGTH])
 
-        if len(analysis) > 1500:
-            print("\n[Preview truncated. Read the complete Markdown report.]")
+        if len(analysis) > PREVIEW_LENGTH:
+            print(
+                "\n[Preview truncated. Read the complete Markdown report.]"
+            )
 
         return 0
 
