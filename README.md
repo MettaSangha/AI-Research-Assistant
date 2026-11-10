@@ -82,16 +82,30 @@ Each research report should contain:
 ```text
 AI-Research-Assistant-Day1/
 │
-├── main.py
+├── assistant/               # Modular application core
+│   ├── __init__.py          # Unified package interface
+│   ├── config.py            # Configuration & constants
+│   ├── prompts.py           # Research & synthesis prompts
+│   ├── validation.py        # Input & schema validation
+│   ├── client.py            # Local Ollama HTTP client
+│   ├── archive.py           # Persistence & archive search
+│   └── synthesis.py         # Cross-document synthesis engine
+│
+├── main.py                  # CLI entry point
 ├── README.md
 ├── SPEC.md
+├── CONTRIBUTING.md
+├── .gitattributes
 ├── .gitignore
 │
+├── examples/
+│   └── sample_source.txt    # Reference grounded documents
+│
 ├── research/
-│   └── Generated research reports
+│   └── .gitkeep             # Local research archive
 │
 └── tests/
-    └── Automated tests
+    └── test_main.py         # Automated test suite
 ```
 
 ## Requirements
@@ -162,7 +176,15 @@ View the complete content of a previously generated research report:
 python main.py --view <filename-or-path>
 ```
 
-### 5. Custom Configuration
+### 5. Cross-Document Knowledge Synthesis
+Reconcile findings, detect cross-document tensions, and combine insights across multiple archived reports:
+```powershell
+python main.py --synthesize "solid-state"
+# or short flag:
+python main.py -x "solid-state"
+```
+
+### 6. Custom Configuration
 Override the default model, endpoint URL, or timeout:
 ```powershell
 python main.py -q "Your research question" -m "qwen3-4b-lowmem:latest" --timeout 180
@@ -191,6 +213,7 @@ Tests cover:
 - Markdown generation, frontmatter quoting, and source provenance tracking
 - Report persistence and filename collision deduplication
 - Command-line interface argument parsing, archive listing, report display, and keyword search
+- Multi-document knowledge synthesis and cross-report contradiction reconciliation
 
 ## Development Roadmap
 
@@ -209,16 +232,16 @@ Tests cover:
 - [x] Add source ingestion
 - [x] Track claim provenance
 - [x] Searchable research archive
-- [ ] Cross-document knowledge retrieval
-- [ ] Automated contradiction detection
+- [x] Cross-document knowledge retrieval
+- [x] Cross-document contradiction detection
 
 ### Stage 3 — Persistent Intelligence
 
-- [ ] Searchable research archive
-- [ ] Cross-document knowledge retrieval
+- [x] Searchable research archive
+- [x] Cross-document knowledge retrieval
 - [ ] Persistent research context
 - [ ] Knowledge graph
-- [ ] Research synthesis across documents
+- [x] Research synthesis across documents
 
 ### Stage 4 — Intelligent Workflows
 

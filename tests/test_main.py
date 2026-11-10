@@ -154,41 +154,37 @@ class TestResearchOutput(unittest.TestCase):
 
     def test_saves_research_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            with patch.object(
-                main,
-                "RESEARCH_DIR",
-                Path(temp_dir)
-            ):
-                output = main.save_research(
-                    "Test research question",
-                    "Test research analysis"
-                )
+            output = main.save_research(
+                "Test research question",
+                "Test research analysis",
+                research_dir=Path(temp_dir),
+            )
 
-                self.assertTrue(output.exists())
-                self.assertEqual(output.suffix, ".md")
-                self.assertIn(
-                    "Test research analysis",
-                    output.read_text(encoding="utf-8")
-                )
+            self.assertTrue(output.exists())
+            self.assertEqual(output.suffix, ".md")
+            self.assertIn(
+                "Test research analysis",
+                output.read_text(encoding="utf-8")
+            )
 
     def test_saves_research_resolves_filename_collision(self):
         fixed_dt = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as temp_dir:
-            with patch.object(main, "RESEARCH_DIR", Path(temp_dir)):
-                with patch("main.datetime") as mock_datetime:
-                    mock_datetime.now.return_value = fixed_dt
-                    mock_datetime.fromtimestamp = datetime.fromtimestamp
-                    output1 = main.save_research(
-                        "Collision question", "Analysis 1"
-                    )
-                    output2 = main.save_research(
-                        "Collision question", "Analysis 2"
-                    )
+            temp_path = Path(temp_dir)
+            with patch("assistant.archive.datetime") as mock_datetime:
+                mock_datetime.now.return_value = fixed_dt
+                mock_datetime.fromtimestamp = datetime.fromtimestamp
+                output1 = main.save_research(
+                    "Collision question", "Analysis 1", research_dir=temp_path
+                )
+                output2 = main.save_research(
+                    "Collision question", "Analysis 2", research_dir=temp_path
+                )
 
-                self.assertTrue(output1.exists())
-                self.assertTrue(output2.exists())
-                self.assertNotEqual(output1, output2)
-                self.assertTrue(output2.name.endswith("-1.md"))
+            self.assertTrue(output1.exists())
+            self.assertTrue(output2.exists())
+            self.assertNotEqual(output1, output2)
+            self.assertTrue(output2.name.endswith("-1.md"))
 
 
 class TestApplicationMain(unittest.TestCase):
@@ -488,6 +484,105 @@ Contradictions
             self.assertEqual(kwargs.get("source_name"), source_file.name)
         finally:
             source_file.unlink()
+
+
+class TestResearchSynthesis(unittest.TestCase):
+
+    def test_synthesize_archive_reports_no_matches(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(ValueError):
+                main.synthesize_archive_reports(
+                    "nonexistent", research_dir=Path(temp_dir)
+                )
+
+    def test_synthesize_archive_reports_success(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            rep1 = dir_path / "20261110-000001-Solid-state-batteries-intro.md"
+            rep1.write_text(
+                "# Research Report\n# FACT\nSolid-state electrolytes increase safety.\n",
+                encoding="utf-8",
+            )
+            rep2 = dir_path / "20261110-000002-Solid-state-dendrite-studies.md"
+            rep2.write_text(
+                "# Research Report\n# FACT\nDendrite suppression requires 5 MPa stack pressure.\n",
+                encoding="utf-8",
+            )
+
+            synthesis_mock_text = """
+# Synthesis Executive Summary
+Unified analysis of solid-state systems.
+
+# Corroborated Findings
+Solid electrolytes and stack pressure are essential.
+
+# Cross-Document Contradictions & Tensions
+None detected between these two reports.
+
+# Integrated Knowledge & Inferences
+High pressure prevents voiding.
+
+# Unified Unknowns & Blindspots
+Low temperature impedance requires deeper study.
+
+# Strategic Next Investigations
+Sub-zero EIS profiling.
+"""
+            with patch(
+                "assistant.synthesis.query_ollama", return_value=synthesis_mock_text
+            ) as mock_query:
+                output_path, text, names = main.synthesize_archive_reports(
+                    "solid-state", research_dir=dir_path
+                )
+
+            self.assertTrue(output_path.exists())
+            self.assertIn("synthesis", output_path.name)
+            self.assertEqual(len(names), 2)
+            self.assertEqual(text, synthesis_mock_text)
+            content = output_path.read_text(encoding="utf-8")
+            self.assertIn('type: "synthesis"', content)
+            self.assertIn("Solid-state-batteries-intro", content)
+            self.assertIn("Solid-state-dendrite-studies", content)
+            mock_query.assert_called_once()
+            called_prompt = mock_query.call_args[0][0]
+            self.assertIn("Solid-state electrolytes increase safety", called_prompt)
+            self.assertIn("Dendrite suppression requires 5 MPa", called_prompt)
+
+    def test_display_synthesis_success(self):
+        with patch(
+            "assistant.synthesis.synthesize_archive_reports",
+            return_value=(
+                Path("synthesis-report.md"),
+                "Synthesis preview text",
+                ["report1.md", "report2.md"],
+            ),
+        ), patch("builtins.print") as mock_print:
+            status = main.display_synthesis("batteries")
+
+        self.assertEqual(status, 0)
+        printed = [call.args[0] for call in mock_print.call_args_list if call.args]
+        self.assertTrue(any("SYNTHESIS REPORT SAVED" in text for text in printed))
+
+    def test_display_synthesis_error(self):
+        with patch(
+            "assistant.synthesis.synthesize_archive_reports",
+            side_effect=ValueError("No reports found"),
+        ), patch("sys.stderr.write"):
+            status = main.display_synthesis("unknown")
+
+        self.assertEqual(status, 1)
+
+    def test_main_synthesize_flag(self):
+        with patch("main.display_synthesis", return_value=0) as mock_disp:
+            status = main.main(["--synthesize", "solid-state"])
+
+        self.assertEqual(status, 0)
+        mock_disp.assert_called_once_with(
+            "solid-state",
+            model=main.MODEL,
+            url=main.OLLAMA_URL,
+            timeout=main.REQUEST_TIMEOUT,
+        )
 
 if __name__ == "__main__":
     unittest.main()
