@@ -32,7 +32,18 @@ RESEARCH_DIR = PROJECT_DIR / "research"
 
 REQUEST_TIMEOUT = 180
 MAX_QUESTION_LENGTH = 5000
+MAX_SOURCE_LENGTH = 100000
 PREVIEW_LENGTH = 1500
+
+REQUIRED_SECTIONS = [
+    "Executive Summary",
+    "Key Findings",
+    "FACT",
+    "INFERENCE",
+    "HYPOTHESIS",
+    "UNKNOWN",
+    "CONTRADICTION",
+]
 
 
 # ---------------------------------------------------------
@@ -107,6 +118,78 @@ def get_research_question(raw_question: str | None = None) -> str:
     return question
 
 
+def load_source_document(source_path: str | Path) -> tuple[str, str]:
+    """Load and validate an external reference document.
+
+    Returns (filename, text_content).
+    """
+
+    path = Path(source_path).resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(f"Source document not found: {source_path}")
+
+    if not path.is_file():
+        raise ValueError(f"Source path is not a file: {source_path}")
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = path.read_text(encoding="utf-8", errors="replace")
+
+    content = content.strip()
+
+    if not content:
+        raise ValueError(f"Source document is empty: {source_path}")
+
+    if len(content) > MAX_SOURCE_LENGTH:
+        raise ValueError(
+            f"Source document exceeds {MAX_SOURCE_LENGTH:,} characters (size: {len(content):,} chars)."
+        )
+
+    return path.name, content
+
+
+def format_user_prompt(
+    question: str,
+    source_content: str | None = None,
+    source_name: str | None = None,
+) -> str:
+    """Format the user message with optional grounded source evidence."""
+
+    if not source_content:
+        return question
+
+    name_label = source_name or "Supplied Reference Document"
+
+    return f"""Research Question:
+{question}
+
+---
+REFERENCE DOCUMENT: {name_label}
+Evidence from this document must be prioritized for the # FACT section.
+Distinguish claims verified by this source from speculation.
+
+{source_content}
+--- END REFERENCE DOCUMENT ---
+"""
+
+
+def validate_report_schema(analysis: str) -> list[str]:
+    """Check that the generated analysis includes the required epistemic sections.
+
+    Returns a list of missing section titles (empty if fully compliant).
+    """
+
+    missing = []
+    for section in REQUIRED_SECTIONS:
+        pattern = rf"(?:^|\n)#+\s+{re.escape(section)}"
+        if not re.search(pattern, analysis, re.IGNORECASE):
+            missing.append(section)
+
+    return missing
+
+
 # ---------------------------------------------------------
 # OLLAMA CLIENT
 # ---------------------------------------------------------
@@ -116,8 +199,16 @@ def query_ollama(
     model: str = MODEL,
     url: str = OLLAMA_URL,
     timeout: int = REQUEST_TIMEOUT,
+    source_content: str | None = None,
+    source_name: str | None = None,
 ) -> str:
     """Send a research question to the local Ollama model."""
+
+    user_message = format_user_prompt(
+        question,
+        source_content=source_content,
+        source_name=source_name,
+    )
 
     payload = {
         "model": model,
@@ -128,7 +219,7 @@ def query_ollama(
             },
             {
                 "role": "user",
-                "content": question,
+                "content": user_message,
             },
         ],
         "stream": False,
@@ -214,6 +305,8 @@ def create_markdown(
     question: str,
     analysis: str,
     model: str = MODEL,
+    source_name: str | None = None,
+    missing_sections: list[str] | None = None,
 ) -> str:
     """Create a timestamped Markdown research document."""
 
@@ -221,11 +314,33 @@ def create_markdown(
         timespec="seconds"
     )
 
+    if missing_sections is None:
+        missing_sections = validate_report_schema(analysis)
+
+    source_meta = f'\nsource: "{source_name}"' if source_name else ""
+    status_line = (
+        "AI-generated; grounded in supplied source"
+        if source_name
+        else "AI-generated; claims not independently verified"
+    )
+
+    schema_note = (
+        f"- Schema warning: Response omitted expected sections: {', '.join(missing_sections)}.\n"
+        if missing_sections
+        else "- Schema compliance: All core epistemic sections verified.\n"
+    )
+
+    source_provenance = (
+        f"- Grounded using provided reference source: `{source_name}`.\n"
+        if source_name
+        else "- No independent source verification was performed by this application.\n"
+    )
+
     return f"""---
 title: Research Report
 created: "{timestamp}"
-model: "{model}"
-status: AI-generated; claims not independently verified
+model: "{model}"{source_meta}
+status: {status_line}
 ---
 
 # Research Report
@@ -244,8 +359,7 @@ status: AI-generated; claims not independently verified
 
 - Generated locally using Ollama.
 - Model: `{model}`.
-- No independent source verification was performed by this application.
-- Treat factual claims as unverified until supported by reliable evidence.
+{source_provenance}{schema_note}- Treat factual claims as unverified until supported by reliable evidence.
 """
 
 
@@ -258,6 +372,8 @@ def save_research(
     analysis: str,
     model: str = MODEL,
     research_dir: Path | None = None,
+    source_name: str | None = None,
+    missing_sections: list[str] | None = None,
 ) -> Path:
     """Save the research report to the local research archive."""
 
@@ -268,7 +384,13 @@ def save_research(
     filename = f"{timestamp}-{sanitize_filename(question[:60])}.md"
 
     output_path = target_dir / filename
-    markdown = create_markdown(question, analysis, model=model)
+    markdown = create_markdown(
+        question,
+        analysis,
+        model=model,
+        source_name=source_name,
+        missing_sections=missing_sections,
+    )
 
     # Exclusive creation prevents accidental overwrites.
     counter = 1
@@ -287,6 +409,92 @@ def save_research(
             counter += 1
 
     return output_path
+
+
+def search_research_archive(
+    keyword: str,
+    research_dir: Path | None = None,
+) -> list[dict]:
+    """Search through all saved research reports for a keyword or phrase."""
+
+    target_dir = research_dir if research_dir is not None else RESEARCH_DIR
+    if not target_dir.exists() or not keyword.strip():
+        return []
+
+    query = keyword.strip().lower()
+    matches = []
+
+    for report_path in sorted(target_dir.glob("*.md"), reverse=True):
+        if not report_path.is_file():
+            continue
+
+        try:
+            content = report_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = report_path.read_text(encoding="utf-8", errors="replace")
+
+        lower_content = content.lower()
+        if query in lower_content or query in report_path.name.lower():
+            matching_sections = []
+            for sec in REQUIRED_SECTIONS:
+                sec_pattern = rf"#+\s+{re.escape(sec)}[\s\S]*?(?=\n#+|$)"
+                match = re.search(sec_pattern, content, re.IGNORECASE)
+                if match and query in match.group(0).lower():
+                    matching_sections.append(sec)
+
+            snippet = ""
+            for line in content.splitlines():
+                clean_line = line.strip()
+                if (
+                    query in clean_line.lower()
+                    and not clean_line.startswith("title:")
+                    and not clean_line.startswith("created:")
+                    and not clean_line.startswith("model:")
+                ):
+                    snippet = clean_line[:140]
+                    break
+
+            matches.append({
+                "path": report_path,
+                "name": report_path.name,
+                "sections": matching_sections,
+                "snippet": snippet,
+                "mtime": datetime.fromtimestamp(
+                    report_path.stat().st_mtime
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+            })
+
+    return matches
+
+
+def display_search_results(
+    keyword: str,
+    research_dir: Path | None = None,
+) -> int:
+    """Print search results matching the keyword across archive documents."""
+
+    results = search_research_archive(keyword, research_dir=research_dir)
+
+    print("\n====================================")
+    print(f"       SEARCH RESULTS: '{keyword}'")
+    print("====================================")
+
+    if not results:
+        print(f"No research reports matched '{keyword}'.")
+        print("====================================")
+        return 0
+
+    print(f"Found {len(results)} matching report(s):\n")
+    for idx, r in enumerate(results, 1):
+        print(f"[{idx}] {r['name']} ({r['mtime']})")
+        if r["sections"]:
+            print(f"    Matched Sections: {', '.join(r['sections'])}")
+        if r["snippet"]:
+            print(f"    Excerpt: \"{r['snippet']}\"")
+        print()
+
+    print("====================================")
+    return 0
 
 
 def list_research_reports(
@@ -387,6 +595,20 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Request timeout in seconds (default: {REQUEST_TIMEOUT})",
     )
     parser.add_argument(
+        "-s",
+        "--source",
+        type=str,
+        metavar="FILE",
+        help="Path to an external text or Markdown source document to ground research",
+    )
+    parser.add_argument(
+        "-k",
+        "--search",
+        type=str,
+        metavar="QUERY",
+        help="Search across all saved research reports in archive by keyword",
+    )
+    parser.add_argument(
         "-l",
         "--list",
         action="store_true",
@@ -421,14 +643,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.view:
         return display_report(args.view)
 
+    if args.search:
+        return display_search_results(args.search)
+
     print("\n====================================")
     print("       AI RESEARCH ASSISTANT")
     print("====================================")
     print(f"Model: {args.model}")
     print("Execution: Local Ollama")
+    if args.source:
+        print(f"Reference Source: {args.source}")
     print("------------------------------------")
 
     try:
+        source_name = None
+        source_content = None
+
+        if args.source:
+            source_name, source_content = load_source_document(args.source)
+            print(f"Loaded source document: {source_name} ({len(source_content):,} characters)")
+
         if args.question is not None:
             question = get_research_question(args.question)
         else:
@@ -439,6 +673,7 @@ def main(argv: list[str] | None = None) -> int:
             args.model == MODEL
             and args.url == OLLAMA_URL
             and args.timeout == REQUEST_TIMEOUT
+            and not source_content
         ):
             analysis = query_ollama(question)
         else:
@@ -447,16 +682,29 @@ def main(argv: list[str] | None = None) -> int:
                 model=args.model,
                 url=args.url,
                 timeout=args.timeout,
+                source_content=source_content,
+                source_name=source_name,
             )
 
         print("\nResearch completed.")
+
+        missing_sections = validate_report_schema(analysis)
+        if missing_sections:
+            print(
+                f"\n[Notice] Response omitted sections: {', '.join(missing_sections)}"
+            )
+
         print("\nSaving report...")
 
-        if args.model == MODEL:
+        if args.model == MODEL and not source_name:
             output_path = save_research(question, analysis)
         else:
             output_path = save_research(
-                question, analysis, model=args.model
+                question,
+                analysis,
+                model=args.model,
+                source_name=source_name,
+                missing_sections=missing_sections,
             )
 
         print("\n====================================")

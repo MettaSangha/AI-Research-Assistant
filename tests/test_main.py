@@ -328,5 +328,166 @@ class TestCLIAndArchive(unittest.TestCase):
             self.assertEqual(result, 0)
             mock_print.assert_any_call("# Test Report Content")
 
+
+class TestSourceIngestionAndSearch(unittest.TestCase):
+
+    def test_load_source_document_success(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tf:
+            tf.write("Reference source data")
+            temp_path = Path(tf.name)
+
+        try:
+            name, content = main.load_source_document(temp_path)
+            self.assertEqual(name, temp_path.name)
+            self.assertEqual(content, "Reference source data")
+        finally:
+            temp_path.unlink()
+
+    def test_load_source_document_not_found(self):
+        with self.assertRaises(FileNotFoundError):
+            main.load_source_document("non_existent_source_file.txt")
+
+    def test_load_source_document_directory_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(ValueError):
+                main.load_source_document(temp_dir)
+
+    def test_load_source_document_empty_rejected(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tf:
+            tf.write("   \n  ")
+            temp_path = Path(tf.name)
+
+        try:
+            with self.assertRaises(ValueError):
+                main.load_source_document(temp_path)
+        finally:
+            temp_path.unlink()
+
+    def test_load_source_document_oversized_rejected(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tf:
+            tf.write("x" * (main.MAX_SOURCE_LENGTH + 1))
+            temp_path = Path(tf.name)
+
+        try:
+            with self.assertRaises(ValueError):
+                main.load_source_document(temp_path)
+        finally:
+            temp_path.unlink()
+
+    def test_format_user_prompt_without_source(self):
+        prompt = main.format_user_prompt("Plain question")
+        self.assertEqual(prompt, "Plain question")
+
+    def test_format_user_prompt_with_source(self):
+        prompt = main.format_user_prompt(
+            "Grounded question",
+            source_content="Paper content excerpt",
+            source_name="paper.txt",
+        )
+        self.assertIn("Grounded question", prompt)
+        self.assertIn("REFERENCE DOCUMENT: paper.txt", prompt)
+        self.assertIn("Paper content excerpt", prompt)
+
+    def test_validate_report_schema_complete(self):
+        analysis = """
+# Executive Summary
+Summary
+# Key Findings
+Findings
+# FACT
+Claims
+# INFERENCE
+Inferences
+# HYPOTHESIS
+Hypothesis
+# UNKNOWN
+Unknowns
+# CONTRADICTION
+Contradictions
+"""
+        missing = main.validate_report_schema(analysis)
+        self.assertEqual(missing, [])
+
+    def test_validate_report_schema_detects_missing(self):
+        analysis = "# Executive Summary\nShort summary."
+        missing = main.validate_report_schema(analysis)
+        self.assertIn("FACT", missing)
+        self.assertIn("INFERENCE", missing)
+        self.assertIn("CONTRADICTION", missing)
+
+    def test_search_research_archive_finds_keyword(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            report = dir_path / "20261110-test-report.md"
+            report.write_text(
+                "# Research Report\n# FACT\nSolid-state electrolytes offer high stability.\n",
+                encoding="utf-8",
+            )
+
+            results = main.search_research_archive("solid-state", research_dir=dir_path)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["name"], report.name)
+            self.assertIn("FACT", results[0]["sections"])
+            self.assertIn("Solid-state electrolytes", results[0]["snippet"])
+
+    def test_search_research_archive_no_match(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results = main.search_research_archive("missing", research_dir=Path(temp_dir))
+            self.assertEqual(results, [])
+
+    def test_display_search_results_with_matches(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            report = dir_path / "report1.md"
+            report.write_text("# Executive Summary\nQuantum computing advances.\n", encoding="utf-8")
+
+            with patch("builtins.print") as mock_print:
+                status = main.display_search_results("Quantum", research_dir=dir_path)
+
+            self.assertEqual(status, 0)
+            printed = [call.args[0] for call in mock_print.call_args_list if call.args]
+            self.assertTrue(any("Found 1 matching report" in text for text in printed))
+
+    def test_display_search_results_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("builtins.print") as mock_print:
+                status = main.display_search_results("None", research_dir=Path(temp_dir))
+            self.assertEqual(status, 0)
+            printed = [call.args[0] for call in mock_print.call_args_list if call.args]
+            self.assertTrue(any("No research reports matched" in text for text in printed))
+
+    def test_main_search_flag(self):
+        with patch("main.display_search_results", return_value=0) as mock_search:
+            status = main.main(["--search", "batteries"])
+        self.assertEqual(status, 0)
+        mock_search.assert_called_once_with("batteries")
+
+    def test_main_with_source_flag(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tf:
+            tf.write("Source reference content")
+            source_file = Path(tf.name)
+
+        try:
+            with patch(
+                "main.query_ollama",
+                return_value="# Executive Summary\nResult\n",
+            ) as mock_query, patch(
+                "main.save_research",
+                return_value=Path("out.md"),
+            ) as mock_save, patch("builtins.print"):
+
+                status = main.main([
+                    "-q", "Grounded research question",
+                    "-s", str(source_file),
+                ])
+
+            self.assertEqual(status, 0)
+            mock_query.assert_called_once()
+            _, kwargs = mock_query.call_args
+            self.assertEqual(kwargs.get("source_content"), "Source reference content")
+            self.assertEqual(kwargs.get("source_name"), source_file.name)
+        finally:
+            source_file.unlink()
+
 if __name__ == "__main__":
     unittest.main()

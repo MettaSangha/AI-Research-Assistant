@@ -138,10 +138,23 @@ Provide the question directly on the command line:
 python main.py -q "What are the primary mechanisms of solid-state batteries?"
 ```
 
-### 3. Archive Management
+### 3. Grounded Research with Source Ingestion
+Pass an external text or Markdown file to ground the investigation and cite evidence:
+```powershell
+python main.py -q "What did the lab observe regarding low-temperature bottlenecks?" -s examples/sample_source.txt
+```
+
+### 4. Archive Management & Search
 List all saved research reports in chronological order:
 ```powershell
 python main.py --list
+```
+
+Search across all archived research reports for a keyword or concept:
+```powershell
+python main.py --search "solid-state"
+# or short flag:
+python main.py -k "efficiency"
 ```
 
 View the complete content of a previously generated research report:
@@ -149,7 +162,7 @@ View the complete content of a previously generated research report:
 python main.py --view <filename-or-path>
 ```
 
-### 4. Custom Configuration
+### 5. Custom Configuration
 Override the default model, endpoint URL, or timeout:
 ```powershell
 python main.py -q "Your research question" -m "qwen3-4b-lowmem:latest" --timeout 180
@@ -172,11 +185,12 @@ python -m pytest
 Tests cover:
 
 - Input validation (empty question, length limits)
+- Source document ingestion (validation, file bounds, formatting)
 - Ollama connectivity and error handling (HTTP errors, timeouts, network failure)
-- Response parsing and malformed JSON recovery
-- Markdown generation and YAML frontmatter quoting
+- Epistemic schema validation and missing section warnings
+- Markdown generation, frontmatter quoting, and source provenance tracking
 - Report persistence and filename collision deduplication
-- Command-line interface argument parsing, archive listing, and report display
+- Command-line interface argument parsing, archive listing, report display, and keyword search
 
 ## Development Roadmap
 
@@ -192,11 +206,11 @@ Tests cover:
 
 ### Stage 2 — Research Quality
 
-- [ ] Improve research prompting
-- [ ] Add source ingestion
-- [ ] Track claim provenance
-- [ ] Support evidence verification
-- [ ] Improve contradiction detection
+- [x] Add source ingestion
+- [x] Track claim provenance
+- [x] Searchable research archive
+- [ ] Cross-document knowledge retrieval
+- [ ] Automated contradiction detection
 
 ### Stage 3 — Persistent Intelligence
 

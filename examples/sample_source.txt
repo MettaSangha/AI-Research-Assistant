@@ -1,0 +1,7 @@
+Title: Direct Observations of Anode-Free Solid-State Battery Cycling
+Author: Cambridge Energy Lab, 2026
+Findings:
+1. The nickel-rich NMC811 cathode coupled with a sulfide-based solid electrolyte (Li6PS5Cl) demonstrated 82% capacity retention after 1,000 cycles at 1C rate.
+2. Interfacial stack pressure was maintained at 5 MPa to prevent void formation during lithium stripping.
+3. Dendrite suppression was achieved by an atomic layer deposition (ALD) alumina interlayer (15 nm).
+4. Major unresolved bottleneck: Cell impedance increases drastically below 0 degrees Celsius, exhibiting an 85% drop in rate capability.
