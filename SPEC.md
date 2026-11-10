@@ -128,16 +128,16 @@ Document setup, execution, configuration, and known limitations.
 
 The first version is complete when:
 
-- [ ] Python application launches.
-- [ ] Ollama connection succeeds.
-- [ ] Configured model responds.
-- [ ] Research question is accepted.
-- [ ] Structured output is generated.
-- [ ] Markdown file is saved.
-- [ ] Three test questions are executed.
-- [ ] Failure handling is tested.
-- [ ] README documents execution.
-- [ ] Git repository contains the verified initial version.
+- [x] Python application launches.
+- [x] Ollama connection succeeds.
+- [x] Configured model responds.
+- [x] Research question is accepted.
+- [x] Structured output is generated.
+- [x] Markdown file is saved.
+- [x] Three test questions are executed.
+- [x] Failure handling is tested.
+- [x] README documents execution.
+- [x] Git repository contains the verified initial version.
 
 ## 10. Future development
 

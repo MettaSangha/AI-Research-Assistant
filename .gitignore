@@ -8,7 +8,10 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+# Research archive
+research/*.md
 research/*.tmp
+!research/.gitkeep
 
 # Backup files
 *.bak

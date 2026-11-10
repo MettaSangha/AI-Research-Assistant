@@ -126,44 +126,69 @@ No external AI API or paid service is required.
 
 ## Running the Application
 
-*Implementation pending.*
-
-The intended interface:
-
+### 1. Interactive Mode
+Run without arguments to enter an interactive prompt:
 ```powershell
 python main.py
 ```
 
-The application will prompt for a research question, generate a structured analysis using the local model, and save the resulting Markdown document in `research/`.
+### 2. Direct Query via CLI Flag
+Provide the question directly on the command line:
+```powershell
+python main.py -q "What are the primary mechanisms of solid-state batteries?"
+```
+
+### 3. Archive Management
+List all saved research reports in chronological order:
+```powershell
+python main.py --list
+```
+
+View the complete content of a previously generated research report:
+```powershell
+python main.py --view <filename-or-path>
+```
+
+### 4. Custom Configuration
+Override the default model, endpoint URL, or timeout:
+```powershell
+python main.py -q "Your research question" -m "qwen3-4b-lowmem:latest" --timeout 180
+```
 
 ## Testing
 
-Run the automated test suite:
+Run the automated test suite with Python's standard `unittest`:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-Tests should cover:
+Or with `pytest`:
 
-- Input validation
-- Ollama connectivity
-- Response parsing
-- Error handling
-- Markdown generation
-- Research file persistence
+```powershell
+python -m pytest
+```
+
+Tests cover:
+
+- Input validation (empty question, length limits)
+- Ollama connectivity and error handling (HTTP errors, timeouts, network failure)
+- Response parsing and malformed JSON recovery
+- Markdown generation and YAML frontmatter quoting
+- Report persistence and filename collision deduplication
+- Command-line interface argument parsing, archive listing, and report display
 
 ## Development Roadmap
 
 ### Stage 1 — Working Prototype
 
-- [ ] Establish project specification
-- [ ] Create README
-- [ ] Implement application entry point
-- [ ] Connect to local Ollama
-- [ ] Generate structured research
-- [ ] Save Markdown reports
-- [ ] Implement automated tests
+- [x] Establish project specification
+- [x] Create README
+- [x] Implement application entry point
+- [x] Connect to local Ollama
+- [x] Generate structured research
+- [x] Save Markdown reports
+- [x] Implement automated tests
 
 ### Stage 2 — Research Quality
 
